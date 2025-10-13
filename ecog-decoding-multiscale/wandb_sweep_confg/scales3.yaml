@@ -1,0 +1,36 @@
+
+
+name: search scales3
+description: try different scales
+program: train_post_resample_multiscale-sweepsearchhp
+method: grid
+metric:
+  name: avg_test_acc_max
+  goal: maximize
+
+
+parameters:
+  batch_size: 
+    values: [256]
+  scales:
+    values: 
+      - [15,50,75]
+      - [25,75,100]
+      - [25,50,75,100]
+      - [15,25,50,75,100]
+      - [25,50,75]
+      - [25,35,45]
+      - [25, 50, 100]
+      - [15,25]
+      - [5,15,25]
+      - [5, 75, 100]
+      - [75, 100]
+      - [15, 75, 100]
+      - [75]
+      - [100]
+      - [5]
+      - [25]
+      - [50]
+      - [15]
+
+      # ... 列出所有你希望被采样到的三元组组合

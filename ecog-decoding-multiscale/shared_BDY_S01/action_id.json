@@ -1,0 +1,66 @@
+{
+  "13": {
+    "0": "fist",
+    "3": "left_thumb",
+    "1": "left_fwristfist",
+    "2": "left_swristfist",
+    "9": "right_thumb",
+    "7": "right_fwristfist",
+    "8": "right_swristfist",
+    "4": "left_lifleg",
+    "5": "left_sknee",
+    "6": "left_sfeet",
+    "10": "right_lifleg",
+    "11": "right_sknee",
+    "12": "right_sfeet"
+  },
+  "4": {
+    "0": "RIGHT_right_fist",
+    "1": "UP_right_lifleg",
+    "2": "LEFT_left_thumb",
+    "3": "DOWN_left_sfeet"
+  },
+  "beida": {
+    "0": "right_swristfist",
+    "1": "right_felbow",
+    "2": "left_thumb",
+    "3": "right_lifleg",
+    "4": "rest"
+  },
+  "beida_8": {
+    "0": "right_swristfist",
+    "1": "right_swristfist&&right_felbow",
+    "2": "right_felbow",
+    "3": "right_felbow&&left_thumb",
+    "4": "left_thumb",
+    "5": "left_thumb&&right_lifleg",
+    "6": "right_lifleg",
+    "7": "right_lifleg&&right_swristfist",
+    "8": "rest"
+  },
+  "9": {
+    "0": "0",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+    "6": "6",
+    "7": "7",
+    "8": "rest"
+  },
+  "tiantan": {
+    "0": "right_selbow",
+    "1": "right_lifarm",
+    "2": "right_swristfist",
+    "3": "right_sfeet",
+    "4": "rest"
+  },
+  "tiantans02": {
+    "0": "right_selbow",
+    "1": "left_fwristfist",
+    "2": "left_sfeet",
+    "3": "left_lifarm",
+    "4": "rest"
+  }
+}

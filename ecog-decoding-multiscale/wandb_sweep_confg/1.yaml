@@ -1,0 +1,45 @@
+
+
+name: search c1_kernel_size 
+description: try different kernel sizes
+program: train_resnet_post_resample_sweepsearchhp
+method: bayes
+metric:
+  name: avg_test_acc_max
+  goal: maximize
+
+
+parameters:
+  batch_size: 
+    values: [128, 256, 512]
+
+  learning_rate: 
+    values: [0.001]
+
+
+  c1_kernel_num:
+    values: [32, 64, 128]
+  c1_kernel_size:
+    values: [5, 7, 25,]
+  c1_stride:
+    values: [3, 5]
+
+  c2_kernel_num:
+    values: [32, 64, 128]
+  c2_kernel_size:
+    values: [3]
+  c2_stride:
+    values: [2]
+
+  c3_kernel_num:
+    values: [64, 128]
+  c3_kernel_size:
+    values: [3]
+  c3_stride:
+    values: [2]
+
+  activation:
+    values: ['elu']
+  
+  focal_gamma:
+    values: [0.5, 1, 1.5, 2, 3]
