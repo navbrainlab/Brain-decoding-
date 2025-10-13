@@ -1,0 +1,30 @@
+
+
+name: search kernel_nums 3d
+description: try different kernel_nums
+program: train_post_resample_multiscale-sweepsearchhp
+method: grid
+metric:
+  name: avg_test_acc_max
+  goal: maximize
+
+
+parameters:
+  batch_size: 
+    values: [256]
+  scale_small:
+    values: #hwt
+      - [5,5,15]
+
+
+
+  scale_mid:
+    values:
+      - [8,8,15]
+
+  scale_large:
+    values:
+      - [10,10,25]
+
+  out_channels:
+    values: [8,16,32,64,128,256,512,1024]

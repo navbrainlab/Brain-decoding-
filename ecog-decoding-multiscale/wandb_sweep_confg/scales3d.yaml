@@ -1,0 +1,39 @@
+
+
+name: search scales3d
+description: try different scales
+program: train_post_resample_multiscale-sweepsearchhp
+method: grid
+metric:
+  name: avg_test_acc_max
+  goal: maximize
+
+
+parameters:
+  batch_size: 
+    values: [256]
+  scale_small:
+    values: #hwt
+      - [3,3,5]
+      - [3,3,15]
+      - [3,3,25]
+      - [5,5,5]
+      - [5,5,15]
+      - [5,5,25]
+
+
+  scale_mid:
+    values:
+      - [8,8,5]
+      - [8,8,15]
+      - [8,8,25]
+      - [7,7,5]
+      - [7,7,25]
+      - [7,7,15]
+
+  scale_large:
+    values:
+      - [10,10,5]
+      - [10,10,25]
+      - [10,10,50]
+      - [10,10,15]
