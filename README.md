@@ -139,12 +139,12 @@ python run_infer.py
 
 ### 目录脚本速览
 
-- `train.py`：源域离线训练（输出模型权重与训练记录）。
-- `adapt.py`：在线自适应（读取训练结果并对目标日期进行流式更新）。
-- `run_otta.py`：流水线脚本，顺序执行 `train.py` → 更新 `adapt_config.json` → 训练多特征超图 → 训练 MDM，并生成 `resemble_adapt_config.json`。
+- `train.py`：深度模型源域离线训练（输出模型权重与训练记录）。
+- `adapt.py`：深度模型在线自适应（读取训练结果并对目标日期进行流式更新）。
 - `multi_feature_hypergraph_train.py` / `multi_feature_hypergraph_adapt.py`：多特征超图的训练与在线适应。
 - `Riemannian_MDM_train.py` / `Riemannian_MDM_adapt.py`：Riemannian MDM 基线训练与适应。
-- `resemble_adapt.py`：融合深度模型与 MDM 的在线适应。
+- `resemble_adapt.py`：集成深度模型与 MDM 的在线适应。
+- `run_otta.py`：流水线脚本，顺序执行以上代码并记录结果。
 
 ### 数据路径与参数说明
 
@@ -155,7 +155,7 @@ python run_infer.py
 - `source_dates` / `target_dates` 使用空格分隔（`nargs='+'`），多天训练时可用 `20250325_20250326_20250327` 形式。
 - 所有脚本支持 `--config` 传入 JSON，加载默认参数后再用 CLI 覆盖。
 
-### 1) 源域训练（train.py）
+### 1) 深度模型源域训练（train.py）
 
 ```bash
 python RieHy/train.py \
@@ -172,7 +172,7 @@ python RieHy/train.py \
 - `args.json`
 - `adapt_config.json`（可直接供 `adapt.py` 使用）
 
-### 2) 在线适应（adapt.py）
+### 2) 深度模型在线适应（adapt.py）
 
 ```bash
 python RieHy/adapt.py \
@@ -243,7 +243,7 @@ python RieHy/Riemannian_MDM_adapt.py \
   --data_path /path/to/daily_bdy
 ```
 
-### 5) Resemble 适应
+### 5) 模型集成
 
 ```bash
 python RieHy/resemble_adapt.py \
