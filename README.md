@@ -132,3 +132,124 @@ python run_infer.py
 ```
 
 ---
+
+## RieHy：Riemannian Hypergraph / OTTA 模块
+
+`RieHy/` 目录包含基于黎曼几何与超图的 ECoG 动作解码方法，覆盖 **源域训练**、**在线自适应（OTTA）**、**多特征超图** 和 **MDM 基线** 等流程。
+
+### 目录脚本速览
+
+- `train.py`：源域离线训练（输出模型权重与训练记录）。
+- `adapt.py`：在线自适应（读取训练结果并对目标日期进行流式更新）。
+- `run_otta.py`：流水线脚本，顺序执行 `train.py` → 更新 `adapt_config.json` → 训练多特征超图 → 训练 MDM，并生成 `resemble_adapt_config.json`。
+- `multi_feature_hypergraph_train.py` / `multi_feature_hypergraph_adapt.py`：多特征超图的训练与在线适应。
+- `Riemannian_MDM_train.py` / `Riemannian_MDM_adapt.py`：Riemannian MDM 基线训练与适应。
+- `resemble_adapt.py`：融合深度模型与 MDM 的在线适应。
+
+### 数据路径与参数说明
+
+- `data_path` 支持：
+  - `daily_bdy` 目录（按日期子目录读取）
+  - BCI 竞赛数据：`bcic_1` 形式（末尾为 subject id）
+  - `.h5` 数据文件
+- `source_dates` / `target_dates` 使用空格分隔（`nargs='+'`），多天训练时可用 `20250325_20250326_20250327` 形式。
+- 所有脚本支持 `--config` 传入 JSON，加载默认参数后再用 CLI 覆盖。
+
+### 1) 源域训练（train.py）
+
+```bash
+python RieHy/train.py \
+  --source_dates 20250325_20250326_20250327 \
+  --data_path /path/to/daily_bdy \
+  --output_path /path/to/OTTA_results \
+  --alignment Riemannian \
+  --model_name MultiScale1DCNN_v2
+```
+
+输出（写入 `output_path/<timestamp>/`）：
+- `best_model_<date>.pt`
+- `training_history_<date>.json`
+- `args.json`
+- `adapt_config.json`（可直接供 `adapt.py` 使用）
+
+### 2) 在线适应（adapt.py）
+
+```bash
+python RieHy/adapt.py \
+  --checkpoint_root /path/to/OTTA_results/20250305_123456 \
+  --source_dates 20250325_20250326_20250327 \
+  --target_dates 20250329 20250331 20250401 \
+  --data_path /path/to/daily_bdy \
+  --indices_root /path/to/OTTA_results/20250305_123456 \
+  --alignment Riemannian \
+  --buffer_size 32
+```
+
+也可使用训练阶段生成的 `adapt_config.json`：
+
+```bash
+python RieHy/adapt.py --config /path/to/OTTA_results/20250305_123456/adapt_config.json
+```
+
+输出：
+- `adaptation_results_<date>.npz`
+- `adaptation_accuracy_<date>.png`
+- `adapt_<timestamp>.log`
+
+### 3) OTTA 一键流水线（run_otta.py）
+
+```bash
+python RieHy/run_otta.py \
+  --output-path /path/to/OTTA_results \
+  --data-path /path/to/daily_bdy \
+  --source-dates 20250325_20250326_20250327 \
+  --target-dates 20250329,20250331,20250401
+```
+
+该脚本会：
+1. 运行 `train.py`
+2. 更新最新实验目录下的 `adapt_config.json`
+3. 运行 `multi_feature_hypergraph_train.py`
+4. 运行 `Riemannian_MDM_train.py`
+5. 生成 `resemble_adapt_config.json`
+
+如需自定义训练/适应参数，可用 `--train-extra`、`--adapt-extra` 或 `--multi-feature-extra` 传递给各脚本。
+
+### 4) 多特征超图与 MDM 基线
+
+```bash
+python RieHy/multi_feature_hypergraph_train.py \
+  --checkpoint_root /path/to/OTTA_results/20250305_123456 \
+  --source_dates 20250325_20250326_20250327 \
+  --data_path /path/to/daily_bdy \
+  --output_path /path/to/Multi-feature_results
+
+python RieHy/multi_feature_hypergraph_adapt.py \
+  --checkpoint_root /path/to/OTTA_results/20250305_123456 \
+  --source_hypergraph_root /path/to/Multi-feature_results/20250305_123456 \
+  --source_dates 20250325_20250326_20250327 \
+  --target_dates 20250329 20250331 20250401 \
+  --data_path /path/to/daily_bdy
+
+python RieHy/Riemannian_MDM_train.py \
+  --source_dates 20250325_20250326_20250327 \
+  --data_path /path/to/daily_bdy \
+  --output_path /path/to/MDM_results
+
+python RieHy/Riemannian_MDM_adapt.py \
+  --class_means_root /path/to/MDM_results/20250305_123456 \
+  --source_dates 20250325_20250326_20250327 \
+  --target_dates 20250329 20250331 20250401 \
+  --data_path /path/to/daily_bdy
+```
+
+### 5) Resemble 适应
+
+```bash
+python RieHy/resemble_adapt.py \
+  --checkpoint_root /path/to/OTTA_results/20250305_123456 \
+  --class_means_root /path/to/MDM_results/20250305_123456 \
+  --source_dates 20250325_20250326_20250327 \
+  --target_dates 20250329 20250331 20250401 \
+  --data_path /path/to/daily_bdy
+```
