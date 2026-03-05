@@ -1,24 +1,63 @@
-import h5py
+from scipy import signal
+import pickle
 import os
 import numpy as np
 import torch
-import pickle
-from collections import Counter
-from scipy import signal
-from torch.nn.utils.rnn import pad_sequence
+import scipy.io
+from braindecode.datasets import MOABBDataset
+from braindecode.preprocessing import (
+    Preprocessor,
+    create_windows_from_events,
+    preprocess,
+    scale,
+)
+from h5_dataset import *
 
+class XZD_Dataset(torch.utils.data.Dataset):
+    def __init__(self, data, label, name):
+        self.data = torch.from_numpy(data).float()
+        self.label = torch.from_numpy(label).long()
+        self.name = name
 
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        data = data - data.mean(0, keepdim=True)
+        return data, self.label[idx]
+
+    def __str__(self):
+        return self.name
+
+class Stanford_imagery_basic_Dataset(torch.utils.data.Dataset):
+    def __init__(self, data, label):
+        self.data = torch.from_numpy(data).float()
+        self.label = torch.from_numpy(label).long()
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        data = self.data[idx]
+        data = data - data.mean(0, keepdim=True)
+        return data, self.label[idx]
 
 def slide_window(data: list, label: list, windows_size: int = 500,
-                 step: int = 100, start_from: int = 0):
+                 step: int = 100, date: list=None):
     temp_slices = []
-    labels_slices = []
+    labels = []
+    dates = []
     for i, temp in enumerate(data):
-        for j in range(start_from, temp.shape[-1] - windows_size, step):
+        for j in range(0, temp.shape[-1] - windows_size + 1, step):
             temp_slices.append(temp[..., j:j + windows_size])
-            labels_slices.append(label[i])
-    return np.array(temp_slices), np.array(labels_slices)
-
+            labels.append(label[i])
+            if date is not None:
+                dates.append(date[i])
+    if date is not None:
+        return np.array(temp_slices), np.array(labels), np.array(dates)
+    else:
+        return np.array(temp_slices), np.array(labels)
 
 def filter_pipline(data, sfreq=600, l_freq=4, h_freq=200, order=4):
     sos_bp = signal.butter(order, [l_freq, h_freq], 'bandpass', output='sos', fs=sfreq)
@@ -29,136 +68,7 @@ def filter_pipline(data, sfreq=600, l_freq=4, h_freq=200, order=4):
     data = signal.sosfiltfilt(sos_bs_200, data)
     return data
 
-
-class Dataset(torch.utils.data.Dataset):
-    def __init__(self, data, label, name, decorrelate=False):
-        self.data = torch.from_numpy(data).float()
-        self.label = torch.from_numpy(label).long()
-        self.name = name
-        self.decorrelate = decorrelate
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        data = self.data[idx]
-        # data = data[:, -1]
-        if self.decorrelate:
-            if data.ndim == 2:
-                data = data - data.mean(1, keepdim=True)
-                U, S, Vt = torch.linalg.svd(data, full_matrices=False)
-                data = U.T @ data
-            else:
-                raise ValueError('data shape is not correct')                
-        else:
-            if data.ndim == 2:
-                data = data - data.mean(0, keepdim=True)
-            elif data.ndim == 3:
-                data = data - data.mean(1, keepdim=True)
-        return data, self.label[idx]
-
-    def __str__(self):
-        return self.name
-
-
-class ContinuesDataset(torch.utils.data.Dataset):
-    def __init__(self, data, label, pos, mask, name):
-        self.data = data
-        self.label = label
-        self.pos = pos
-        self.mask = mask
-        self.name = name
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        data = self.data[idx]
-        # data = data[:, -1]
-        if data.ndim == 2:
-            data = data - data.mean(0, keepdim=True)
-        elif data.ndim == 3:
-            data = data - data.mean(1, keepdim=True)
-        return data, self.label[idx], self.pos[idx], self.mask[idx]
-
-    def __str__(self):
-        return self.name
-
-
-class StreamDataset(torch.utils.data.Dataset):
-    def __init__(self, data, batch=128, seq_len=768, max_length=None):
-        self.data = data
-        self.batch = batch
-        self.seq_len = seq_len
-        self.length = max_length
-
-    def __len__(self):
-        return self.batch
-
-    def __getitem__(self, idx):
-        data = self.data[idx]
-        length = self.length[idx] - self.seq_len
-        data = data - data.mean(0, keepdims=True)
-        i = torch.randint(0, length, (1,)).item()
-        data = data[..., i:i + self.seq_len]
-        return data
-
-
-class StreamDatasetwithSession(torch.utils.data.Dataset):
-    def __init__(self, data, seq_len=768, session=None, max_length=None):
-        self.data = data
-        self.seq_len = seq_len
-        self.length = max_length
-        self.session = session
-        self.split = seq_len // 256
-        self.trial_length = len(self.data)
-
-    def __len__(self):
-        return self.trial_length * 5
-
-    def __getitem__(self, idx):
-        idx = idx % self.trial_length
-        data = self.data[idx]
-        length = self.length - self.seq_len
-        i = torch.randint(0, length, (1,)).item()
-        data = data[..., i:i + self.seq_len]
-        data = data - data.mean(0, keepdims=True)
-        data = np.array(np.split(data, self.split, axis=-1)).transpose(1, 0, 2)
-        return data, self.session[idx]
-
-
-class StreamDataset2(torch.utils.data.Dataset):
-    def __init__(self, data, labels, batch=128, seq_len=20, max_length=None, name=None, session=None):
-        self.data = data
-        self.labels = labels
-        self.batch = batch
-        self.seq_len = seq_len
-        self.length = max_length
-        self.name = name
-        self.session = session
-
-    def __len__(self):
-        return len(self.data) * 4
-
-    def __getitem__(self, idx):
-        idx = idx % len(self.data)
-        data = self.data[idx]
-        labels = self.labels[idx]
-        length = self.length[idx] - self.seq_len
-        session = self.session[idx]
-        if length < 0:
-            length = 1
-        data = data - data.mean(0, keepdims=True)
-        i = torch.randint(0, length, (1,)).item()
-        data = data[..., i:i + self.seq_len]
-        # data = data[:, -1]
-        return data, labels, session
-
-    def __str__(self):
-        return self.name
-
-
-def read_pkl(root, session=0, sfreq=256, include_failure=True):
+def read_pkl(root, session=0, sfreq=256):
     data_path = [os.path.join(root, file_name) for file_name in os.listdir(root)]
     data_path.sort()
     data_paths = []
@@ -202,200 +112,251 @@ def read_pkl(root, session=0, sfreq=256, include_failure=True):
     return filtered_data, filtered_labels, sessions
 
 
-def read_continuous_pkl(root, windows_size=1, step=0.1, sfreq=256, radius=12, dis_threshold=1.5):
-    data_path = [os.path.join(root, file_name) for file_name in os.listdir(root)]
-    data_path.sort()
-    data_paths = []
-    for file_name in data_path:
-        try:
-            a = pickle.load(open(file_name, 'rb'))
-            data_paths.append(a)
-        except:
-            print(f'Error loading {file_name}')
-            continue
-    data = []
-    labels = []
-    positions = []
-    lengths = []
-    distances = []
+def load_daily_dataset(data_path, windows_size=256, step=32, train_ratio=0.8, shuffle='sample'):
+    """
+    Load daily dataset from pkl files, apply sliding window
+    and split train set and test set randomly.
+
+    Parameters
+    ----------
+    step
+    data_path
+    windows_size
+    session
+
+    Returns
+    -------
+
+    """
+    
+    data, labels, test_session = read_pkl(data_path, sfreq=windows_size)
+
+    if shuffle == 'trial':
+        indices = np.arange(len(data))
+        np.random.shuffle(indices)
+        data = [data[i] for i in indices]
+        labels = [labels[i] for i in indices]    
+
+    data, labels = slide_window(data, list(labels), windows_size=windows_size, step=step)
+
+    # Shuffle the data
+    if shuffle == 'sample':
+        indices = np.arange(len(data))
+        np.random.shuffle(indices)
+        data = data[indices]
+        labels = labels[indices]
+
+    if shuffle == 'none':
+        pass
+
+    if shuffle != 'sample' and shuffle != 'trial'  and shuffle != 'none':
+        raise ValueError(f'Invalid shuffle type: {shuffle}')
+
+    # Split the data
+    train_ratio = train_ratio
+    split_index = int(data.shape[0] * train_ratio)    
+    train_data = data[:split_index]
+    train_labels = labels[:split_index]
+    test_data = data[split_index:]
+    test_labels = labels[split_index:]
+
+    data_path = os.path.split(data_path)[-1]
+    train_dataset = XZD_Dataset(train_data, train_labels, name=f'{data_path}_train')
+    test_dataset = XZD_Dataset(test_data, test_labels, name=f'{data_path}_test')
+    return train_dataset, test_dataset
+
+
+def load_multiday_dataset(train_path, windows_size=256, step=64, train_ratio=0.8, shuffle='sample'):
+    """
+    Load daily dataset from pkl files and apply sliding window.
+    Parameters
+    ----------
+    step
+    train_path
+    windows_size
+    session
+
+    Returns
+    -------
+
+    """
+    trial = []
+    trial_labels = []
+    for path in train_path:
+        t, t_l, t_s = read_pkl(path, sfreq=windows_size)
+        # Repeat path to form a list with same length as t
+        trial += t
+        trial_labels += t_l
+
+    if shuffle == 'trial':
+        idx = np.arange(len(trial))
+        np.random.shuffle(idx)
+        trial = [trial[i] for i in idx]
+        trial_labels = [trial_labels[i] for i in idx]
+
+        train_size = int(len(trial) * train_ratio)
+        train = trial[:train_size]
+        train_labels = trial_labels[:train_size]
+        valid = trial[train_size:]
+        valid_labels = trial_labels[train_size:]
+
+        train, train_labels = slide_window(train, list(train_labels), windows_size=windows_size, step=step)
+        valid, valid_labels = slide_window(valid, list(valid_labels), windows_size=windows_size, step=step)
+
+    trial, trial_labels = slide_window(trial, list(trial_labels), windows_size=windows_size, step=step)
+
+    if shuffle == 'sample':
+        indices = np.arange(len(trial))
+        np.random.shuffle(indices)
+        trial = trial[indices]
+        trial_labels = trial_labels[indices]    
+
+        train_size = int(len(trial) * train_ratio)
+        train = trial[:train_size]
+        train_labels = trial_labels[:train_size]
+        valid = trial[train_size:]
+        valid_labels = trial_labels[train_size:]
+
+    if shuffle == 'none':
+        pass
+
+    if shuffle != 'sample' and shuffle != 'trial' and shuffle != 'none':
+        raise ValueError(f'Invalid shuffle type: {shuffle}')
+    
+
+    train_path = '_'.join([os.path.split(i)[-1] for i in train_path])
+    all_dataset = XZD_Dataset(trial, trial_labels, name=f'{train_path}')
+    valid_dataset = XZD_Dataset(valid, valid_labels, name=f'{train_path}')
+    train_dataset = XZD_Dataset(train, train_labels, name=f'{train_path}')
+    return train_dataset, valid_dataset
+
+
+def load_Stanford_imagery_basic(data_path, windows_size=1000, step=100, train_ratio=0.8, shuffle='sample'):
+    data = scipy.io.loadmat(data_path)
+    # Split data['stim'] into groups of consecutive same numbers
+    stim = data['stim'].flatten()
+    signal = data['data']
+    stim_trial = []
+    signal_trial = []
+    start = 0
+
+    for i in range(1, len(stim)):
+        if (stim[i] != stim[i-1]):
+            if stim[i-1] != 0:
+                stim_trial.append(stim[start])
+                signal_trial.append(signal[start:i])
+            start = i
+    if stim[-1] != 0:
+        stim_trial.append(stim[start])  # The last group
+        signal_trial.append(signal[start:])  # The last group
+
+    stim_trial = np.array(stim_trial) # [trial]
+    signal_trial = np.array(signal_trial) # [trial, time, channel]  
+
+    signal_sample, stim_sample = slide_window(signal_trial.transpose(0, 2, 1), stim_trial, windows_size=windows_size, step=step)
+    # signal_sample: [sample, channel, time]
+    # stim_sample: [sample]
+
+    # Shuffle the data
+    if shuffle == 'sample':
+        indices = np.arange(signal_sample.shape[0])
+        np.random.shuffle(indices)
+        signal_sample = signal_sample[indices]
+        stim_sample = stim_sample[indices]
+    else:
+        raise ValueError('Not supported shuffle type')
+    
+    # Split the data
+    train_ratio = train_ratio
+    split_index = int(signal_sample.shape[0] * train_ratio)    
+    train_data = signal_sample[:split_index]
+    train_labels = stim_sample[:split_index]
+    test_data = signal_sample[split_index:]
+    test_labels = stim_sample[split_index:]
+
+    data_path = os.path.split(data_path)[-1]
+    train_dataset = Stanford_imagery_basic_Dataset(train_data, train_labels)
+    test_dataset = Stanford_imagery_basic_Dataset(test_data, test_labels)
+    return train_dataset, test_dataset  
+
+
+def load_Stanford_imagery_feedback(data_paths, windows_size=1000, step=100, train_ratio=0.8, shuffle='sample'):
+    '''
+    Can only classify rest or not
+    '''
+    # Load imagery_feedback data
+    stim_sample = []
+    signal_sample = []    
     for data_path in data_paths:
-        if data_path['pos'] is not None:
-            d = data_path['data']
-            label = data_path['label']
-            pos = list(data_path['pos'])
-            rest = len(Counter(label)) - 1
-            for i, l in enumerate(label):
-                if l != rest:
-                    temp_pos = np.array(pos[i])
-                    length = temp_pos.shape[0]
-                    temp_pos = temp_pos[:length]
-
-                    diffs = np.diff(temp_pos, axis=0)
-                    distance = np.sum(np.sqrt(np.sum(diffs ** 2, axis=1))) / radius
-
-                    if distance > dis_threshold:
-                        continue
-
-                    positions.append(torch.from_numpy(temp_pos / radius).float())
-                    dd = filter_pipline(d[i], sfreq=sfreq, l_freq=4, h_freq=100)
-                    dd, ll = slide_window([dd], [l], windows_size=int(windows_size * sfreq), step=int(step * sfreq))
-                    dd = signal.resample_poly(dd, 256, sfreq, axis=-1)
-                    dd = dd[:length]
-                    data.append(torch.from_numpy(dd).float())
-                    labels.append(torch.from_numpy(ll[:length]).long())
-                    lengths.append(length)
-                    distances.append(distance)
-    return data, labels, positions, lengths, distances
-
-
-class GeneratorDataset(object):
-    def __init__(self, root, mode='drop_old', sfreq=256, session=0):
-        filtered_data, filtered_labels, sessions = read_pkl(root, session=session, sfreq=sfreq)
-        self.data = filtered_data
-        self.labels = filtered_labels
-        self.sessions = sessions
-        self.length = len(self.data)
-        self.mode = mode
-        self.count = 0
-        self.name = os.path.split(root)[-1]
-        self.sfreq = 256
-
-    def __iter__(self):
-        return self
-
-    def __len__(self):
-        return self.length
-
-    def __next__(self):
-        if self.count == 0:
-            test = self.data[self.count:self.count + 1]
-            test_labels = np.concatenate(self.labels[self.count:self.count + 1])
-            test = [i for d in test for i in d]
-            test, test_labels = slide_window(test, list(test_labels), windows_size=self.sfreq, step=32)
-            test_dataset = Dataset(test, test_labels, name=f'{self.name}_{self.count + 1}')
-            self.count += 1
-            return None, test_dataset
-        elif self.count < self.length:
-            if self.mode != 'drop_old':
-                train = self.data[self.count - 1:self.count]
-                train_labels = np.concatenate(self.labels[self.count - 1:self.count])
-                train_session = np.concatenate(self.sessions[self.count - 1:self.count])
-            else:
-                train = self.data[:self.count]
-                train_labels = np.concatenate(self.labels[:self.count])
-                train_session = np.concatenate(self.sessions[:self.count])
-            test = self.data[self.count:self.count + 1]
-            test_labels = np.concatenate(self.labels[self.count:self.count + 1])
-            train = [i for d in train for i in d]
-            test = [i for d in test for i in d]
-            train_length = [d.shape[-1] - self.sfreq for d in train]
-            test, test_labels = slide_window(test, list(test_labels), windows_size=self.sfreq, step=32)
-            train_dataset = StreamDataset2(train, train_labels, batch=0, seq_len=self.sfreq, max_length=train_length,
-                                           name=f'{self.name}_{self.count}', session=train_session)
-            test_dataset = Dataset(test, test_labels, name=f'{self.name}_{self.count + 1}')
-            self.count += 1
-            return train_dataset, test_dataset
+        data = scipy.io.loadmat(data_path)
+        # Split data['stim'] into groups of consecutive same numbers
+        if 'TargetCode' in data.keys(): # feedback
+            iti = data['ITI'].flatten()
+            result = data['Result'].flatten()
+            stim = data['TargetCode'].flatten()
+            signal = data['data']
+            stim = stim[(iti==0)*(result==0)] # Remove inter trial interval and reward period
+            signal = signal[(iti==0)*(result==0), :]
+            fb = True
+        elif 'StimulusCode' in data.keys(): # imagery or motor
+            stim = data['StimulusCode'].flatten()
+            signal = data['data']
+            fb = False
         else:
-            if self.mode != 'drop_old':
-                train = self.data[self.count - 1:self.count]
-                train_labels = np.concatenate(self.labels[self.count - 1:self.count])
-                train_session = np.concatenate(self.sessions[self.count - 1:self.count])
+            raise ValueError('Unrecognized stimulation')
+
+        j = 0
+        while j<(len(stim) - windows_size):
+            indices = np.where(stim[j:j+windows_size] != stim[j])
+            if len(indices[0]) > 0: # stim[j:j+windows_size] includes different values
+                j += indices[0][0]
             else:
-                train = self.data[:self.count]
-                train_labels = np.concatenate(self.labels[:self.count])
-                train_session = np.concatenate(self.sessions[:self.count])
-            train = [i for d in train for i in d]
-            train_length = [d.shape[-1] for d in train]
-            train_dataset = StreamDataset2(train, train_labels, batch=0, seq_len=256, max_length=train_length,
-                                           name=f'{self.name}_{self.count}', session=train_session)
-            return train_dataset, None
+                if fb and (stim[j]==0): # No target
+                    j += windows_size
+                else:
+                    signal_sample.append(signal[j:j + windows_size, :])
+                    if fb and (stim[j]==2): # Lower target with smaller cursor location number, Passive, TargetCode is 2
+                        stim_sample.append(0)
+                    elif (not fb) and (stim[j]!=0): # Every condition that is not rest
+                        stim_sample.append(1)
+                    else:
+                        stim_sample.append(stim[j])
+                    j += step            
+
+    stim_sample = np.array(stim_sample) # [sample]
+    signal_sample = np.array(signal_sample).transpose(0, 2, 1) # [sample, channel, time]
+        # if fb:
+        #     stim_sample[stim_sample==2] = 0 # Lower target with smaller cursor location number, Passive, TargetCode is 2
+        # else:
+        #     stim_sample[stim_sample!=0] = 1
 
 
-def load_stream(t_len=3, windows_size=256):
-    import h5py
-    data = h5py.File('/home/xzd_lab/wangruopeng/DATA/s01.h5', 'r')
-    stream = data['data']
-    session = data['session']
-    train_stream = StreamDatasetwithSession(stream, session=session, seq_len=windows_size * t_len,
-                                            max_length=10 * windows_size)
-    return train_stream
+    # Shuffle the data
+    if shuffle == 'sample':
+        indices = np.arange(signal_sample.shape[0])
+        np.random.shuffle(indices)
+        signal_sample = signal_sample[indices]
+        stim_sample = stim_sample[indices]
+    else:
+        raise ValueError('Not supported shuffle type')
+
+    # Split the data
+    train_ratio = train_ratio
+    split_index = int(signal_sample.shape[0] * train_ratio)    
+    train_data = signal_sample[:split_index]
+    train_labels = stim_sample[:split_index]
+    test_data = signal_sample[split_index:]
+    test_labels = stim_sample[split_index:]
+
+    data_path = os.path.split(data_path)[-1]
+    train_dataset = Stanford_imagery_basic_Dataset(train_data, train_labels)
+    test_dataset = Stanford_imagery_basic_Dataset(test_data, test_labels)
+    return train_dataset, test_dataset  
 
 
-def load_daily_dataset(test_path, windows_size=256, step=32, session=16, include_failure=True, decorrelate=False, svd=None):
+def load_hypergraph_data(train_path, windows_size=256, step=256, train_ratio=0.8, return_date=False):
     """
-    Load daily dataset from pkl files and apply sliding window.
-    Parameters
-    ----------
-    step
-    test_path
-    windows_size
-    session
-
-    Returns
-    -------
-
-    """
-    test, test_labels, test_session = read_pkl(test_path, sfreq=windows_size, session=session, include_failure=include_failure)
-    if decorrelate:
-        print('Conduct channel decorrelation')
-        test = decorrelate_channel_by_day(test)
-    elif svd:
-        print(f"Conduct channel SVD keeping top {svd['rank']} components")
-        for i in range(len(test)):
-            test[i] -= np.mean(test[i], axis=1, keepdims=True)
-            test[i] = svd['U'][:, :svd['rank']].T @ test[i]
-    test, test_labels = slide_window(test, list(test_labels), windows_size=windows_size, step=step)
-    test_path = os.path.split(test_path)[-1]
-    test_dataset = Dataset(test, test_labels, name=f'{test_path}')
-    return test_dataset
-
-
-def load_trail(test_path, session=16):
-    """
-    Load daily dataset from pkl files and apply sliding window.
-    Parameters
-    ----------
-    test_path
-    windows_size
-    session
-
-    Returns
-    -------
-
-    """
-    test, test_labels, test_session = read_pkl(test_path, session=session)
-    test_path = os.path.split(test_path)[-1]
-    return test, test_labels, test_path
-
-def decorrelate_channel(trails):
-    decorrelated_trails = []
-    for trail in trails:
-        trail = trail - np.mean(trail, axis=1, keepdims=True)
-        U, S,Vt = np.linalg.svd(trail, full_matrices=False)
-        trail = U.T @ trail
-        decorrelated_trails.append(trail)
-    return decorrelated_trails
-
-def decorrelate_channel_by_day(trials):
-    n_trials = len(trials)
-    n_time_list = [trial.shape[1] for trial in trials]
-    trials = np.hstack(trials)
-    # n_trials, n_channels, n_time = decorrelated_trials.shape
-    trials -= np.mean(trials, axis=1, keepdims=True)
-    U, S, Vt = np.linalg.svd(trials, full_matrices=False)
-    trials = U.T @ trials
-    n = 0
-    decorrelated_trials = []
-    for i in range(n_trials):
-        decorrelated_trials.append(trials[:, n:n+n_time_list[i]])
-        n += n_time_list[i]
-    return decorrelated_trials
-
-
-
-def load_train_dataset(train_path, windows_size=256, step=64, session=16, include_failure=True, decorrelate=False, svd=None):
-    """
-    Load daily dataset from pkl files and apply sliding window.
+    Load daily dataset from pkl files, apply sliding window and compute covariance matrices.
     Parameters
     ----------
     step
@@ -407,87 +368,56 @@ def load_train_dataset(train_path, windows_size=256, step=64, session=16, includ
     -------
 
     """
-    train_trail = []
-    train_labels_trail = []
-    train_session = []
+    trial = []
+    trial_labels = []
+    date = []
+    # Repeat path to form a list
     for path in train_path:
-        t, t_l, t_s = read_pkl(path, sfreq=windows_size, session=session, include_failure=include_failure)
-        train_trail += t
-        train_labels_trail += t_l
-        train_session += t_s
+        t, t_l, t_s = read_pkl(path, sfreq=windows_size)
+        date += [os.path.split(path)[-1]] * len(t)
+        trial += t
+        trial_labels += t_l
 
-    if decorrelate:
-        print('Conduct channel decorrelation')
-        train_trail = decorrelate_channel_by_day(train_trail)
-    elif svd:
-        print(f"Conduct channel SVD keeping top {svd['rank']} components")
-        for i in range(len(train_trail)):
-            train_trail[i] -= np.mean(train_trail[i], axis=1, keepdims=True)
-            train_trail[i] = svd['U'][:, :svd['rank']].T @ train_trail[i]
+    trial, trial_labels, date = slide_window(trial, list(trial_labels), windows_size=windows_size, step=step, date=date)
+    # trial: [sample, channel, time], numpy array; trial_labels: [sample], numpy array
 
-    idx = np.arange(len(train_trail))
-    np.random.shuffle(idx)
-    train = [train_trail[i] for i in idx]
-    train_labels = [train_labels_trail[i] for i in idx]
-    # train_session = [train_session[i] for i in idx]
+    # compute covariance matrix for each sample
+    cov_matrices = []
+    for sample in trial:
+        cov = np.cov(sample)
+        cov = cov.flatten() # reshape to 1D vector
+        cov_matrices.append(cov)
+    trial_cov = np.array(cov_matrices) # [sample, channel*channel]
 
-    valid_size = int(len(train) * 0.9)
-    train_valid = train[:valid_size]
-    train_valid_labels = train_labels[:valid_size]
-    valid = train[valid_size:]
-    valid_labels = train_labels[valid_size:]
+    # one-hot encode the labels
+    num_classes = len(np.unique(trial_labels))
+    trial_labels_onehot = np.zeros((len(trial_labels), num_classes))
+    for i, label in enumerate(trial_labels):
+        trial_labels_onehot[i, label] = 1
+    trial_labels = trial_labels_onehot
+    
+    # shuffle the data
+    indices = np.arange(len(trial_cov))
+    np.random.shuffle(indices)
+    trial_cov = trial_cov[indices]
+    trial_labels = trial_labels[indices]
+    date = np.array(date)[indices]
+    # split the data
+    train_size = int(len(trial_cov) * train_ratio)
+    train = trial_cov[:train_size]
+    train_labels = trial_labels[:train_size]
+    train_date = date[:train_size]
+    valid = trial_cov[train_size:]
+    valid_labels = trial_labels[train_size:]
+    valid_date = date[train_size:]
+    if return_date:
+        return train, train_labels, valid, valid_labels, train_date, valid_date, indices
+    else:
+        return train, train_labels, valid, valid_labels, indices
 
-    train, train_labels = slide_window(train, list(train_labels), windows_size=windows_size, step=step)
-    train_valid, train_valid_labels = slide_window(train_valid, list(train_valid_labels), windows_size=windows_size,
-                                                   step=step)
-    valid, valid_labels = slide_window(valid, list(valid_labels), windows_size=windows_size, step=step)
-
-    train_path = '_'.join([os.path.split(i)[-1] for i in train_path])
-    train_dataset = Dataset(train, train_labels, name=f'{train_path}')
-    valid_dataset = Dataset(valid, valid_labels, name=f'{train_path}')
-    train_valid_dataset = Dataset(train_valid, train_valid_labels, name=f'{train_path}')
-    return train_dataset, train_valid_dataset, valid_dataset, train_trail, train_labels_trail
-
-
-def load_continuous_daily_dataset(train_path, windows_size=1, step=0.1, sfreq=600):
+def load_centered_data_for_otta(train_path, windows_size=256, step=256, train_ratio=0.8, indices=None, return_date=False):
     """
-    Load daily dataset from pkl files and apply sliding window.
-    Parameters
-    ----------
-    train_path
-
-    Returns
-    -------
-
-    """
-    train_trail = []
-    train_labels_trail = []
-    train_pos = []
-    train_seq_len = []
-    train_distance = []
-    t, t_l, t_s, t_len, t_dis = read_continuous_pkl(train_path, windows_size=windows_size, step=step, sfreq=sfreq)
-    train_trail += t
-    train_labels_trail += t_l
-    train_pos += t_s
-    train_seq_len += t_len
-    train_distance += t_dis
-
-    train_distance = np.array(train_distance)
-    train_trail = pad_sequence(train_trail, batch_first=True, padding_value=0.0)
-    length = train_trail.shape[1]
-    train_labels_trail = pad_sequence(train_labels_trail, batch_first=True, padding_value=-1)
-    train_pos = pad_sequence(train_pos, batch_first=True, padding_value=0.0)[:, :length]
-    train_mask = torch.ones_like(train_labels_trail, dtype=torch.bool)
-    train_mask = train_mask & (train_labels_trail != -1)  # Mask out -1 labels
-
-    train_path = '_'.join([os.path.split(i)[-1] for i in train_path])
-    train_dataset = ContinuesDataset(train_trail, train_labels_trail, train_pos, train_mask, name=f'{train_path}')
-    return train_dataset
-
-
-def load_continuous_train_dataset(train_path, windows_size=1, step=0.1, sfreq=600):
-    """
-    Load daily dataset from pkl files and apply sliding window.
+    Load daily dataset from pkl files and apply sliding window. Do NOT compute covariance matrices.
     Parameters
     ----------
     step
@@ -499,32 +429,290 @@ def load_continuous_train_dataset(train_path, windows_size=1, step=0.1, sfreq=60
     -------
 
     """
-    train_trail = []
-    train_labels_trail = []
-    train_pos = []
-    train_seq_len = []
-    train_distance = []
+    trial = []
+    trial_labels = []
+    date = []
+    # Repeat path to form a list
     for path in train_path:
-        t, t_l, t_s, t_len, t_dis = read_continuous_pkl(path, windows_size=windows_size, step=step, sfreq=sfreq)
-        train_trail += t
-        train_labels_trail += t_l
-        train_pos += t_s
-        train_seq_len += t_len
-        train_distance += t_dis
+        t, t_l, t_s = read_pkl(path, sfreq=windows_size)
+        date += [os.path.split(path)[-1]] * len(t)
+        trial += t
+        trial_labels += t_l
 
-    train_distance = np.array(train_distance)
-    train_trail = pad_sequence(train_trail, batch_first=True, padding_value=0.0)
-    length = train_trail.shape[1]
-    train_labels_trail = pad_sequence(train_labels_trail, batch_first=True, padding_value=-1)
-    train_pos = pad_sequence(train_pos, batch_first=True, padding_value=0.0)[:, :length]
-    train_mask = torch.ones_like(train_labels_trail, dtype=torch.bool)
-    train_mask = train_mask & (train_labels_trail != -1)  # Mask out -1 labels
+    trial, trial_labels, date = slide_window(trial, list(trial_labels), windows_size=windows_size, step=step, date=date)
+    # trial: [sample, channel, time], numpy array; trial_labels: [sample], numpy array
 
-    train_path = '_'.join([os.path.split(i)[-1] for i in train_path])
-    train_dataset = ContinuesDataset(train_trail, train_labels_trail, train_pos, train_mask, name=f'{train_path}')
-    return train_dataset
+    # Channel_wise centering
+    trial = trial - trial.mean(axis=2, keepdims=True)
+
+    # one-hot encode the labels
+    num_classes = len(np.unique(trial_labels))
+    trial_labels_onehot = np.zeros((len(trial_labels), num_classes))
+    for i, label in enumerate(trial_labels):
+        trial_labels_onehot[i, label] = 1
+    trial_labels = trial_labels_onehot
+    
+    # shuffle the data
+    if indices is None:
+        indices = np.arange(len(trial))
+        np.random.shuffle(indices)
+    trial = trial[indices]
+    trial_labels = trial_labels[indices]
+    date = np.array(date)[indices]
+    # split the data
+    train_size = int(len(trial) * train_ratio)
+    train = trial[:train_size]
+    train_labels = trial_labels[:train_size]
+    train_date = date[:train_size]
+    valid = trial[train_size:]
+    valid_labels = trial_labels[train_size:]
+    valid_date = date[train_size:]
+    if return_date:
+        return train, train_labels, valid, valid_labels, train_date, valid_date, indices
+    else:
+        return train, train_labels, valid, valid_labels, indices
+
+def load_splitted_target_dataset(path):
+    dataset = np.load(path, allow_pickle=True).item()
+    data = dataset['target_data']
+    labels = dataset['target_labels']
+    return data, labels
+    
+def load_splitted_source_dataset(path):
+    dataset = np.load(path, allow_pickle=True).item()
+    train_data = dataset.get('train_data')
+    train_labels = dataset.get('train_labels')
+    valid_data = dataset.get('valid_data')
+    valid_labels = dataset.get('valid_labels')
+    train_date = dataset.get('train_date', None)
+    valid_date = dataset.get('valid_date', None)
+    return train_data, train_labels, valid_data, valid_labels, train_date, valid_date
+
+def _load_bcic(subject_ids: list[int], dataset: str = "2a",
+              preprocessing_dict: dict = None, verbose: str = "WARNING"):
+    dataset_name = "BNCI2014001" if dataset == "2a" else "BNCI2014004"
+    dataset = MOABBDataset(dataset_name, subject_ids=subject_ids)
+
+    preprocessors = [
+        Preprocessor("pick_types", eeg=True, meg=False, stim=False, verbose=verbose),
+        Preprocessor(scale, factor=1e6, apply_on_array=True),
+        Preprocessor("resample", sfreq=preprocessing_dict["sfreq"], verbose=verbose)
+    ]
+
+    l_freq, h_freq = preprocessing_dict["low_cut"], preprocessing_dict["high_cut"]
+    if l_freq is not None or h_freq is not None:
+        preprocessors.append(Preprocessor("filter", l_freq=l_freq, h_freq=h_freq,
+                                          verbose=verbose))
+
+    preprocess(dataset, preprocessors)
+
+    # create windows
+    sfreq = dataset.datasets[0].raw.info["sfreq"]
+    trial_start_offset_samples = int(preprocessing_dict["start"] * sfreq)
+    trial_stop_offset_samples = int(preprocessing_dict["stop"] * sfreq)
+    windows_dataset = create_windows_from_events(
+        dataset, trial_start_offset_samples=trial_start_offset_samples,
+        trial_stop_offset_samples=trial_stop_offset_samples, preload=True
+    )
+
+    return windows_dataset, dataset.datasets[0].raw.info
+
+def load_centered_bcic(subject_id: int, 
+                       dataset: str = "2a", 
+                       session: str = "T",
+                       train_ratio: float = 0.8, 
+                       windows_size: int = 1000, 
+                       step: int = 1000,
+                       preprocessing_dict: dict = None, 
+                       return_date: bool = False,
+                       indices = None,
+                       verbose: str = "WARNING"):
+    if preprocessing_dict is None:
+        preprocessing_dict = {"sfreq":250,"low_cut":0,"high_cut":40,"start":0.0,"stop":0.0}
+    dataset, info = _load_bcic(subject_ids=[subject_id], dataset=dataset,
+                                preprocessing_dict=preprocessing_dict, verbose=verbose)    
+    # split the data
+    splitted_ds = dataset.split("session")
+    dataset = splitted_ds[f"session_{session}"]
+
+    # load the data
+    X = np.concatenate([run.windows.load_data()._data for run in dataset.datasets], axis=0)
+    y = np.concatenate([run.y for run in dataset.datasets], axis=0)
+
+    # Slide window
+    X_windows, y_windows = slide_window(X, y, windows_size=windows_size, step=step)
+
+    # Channel-wise centering
+    X_windows = X_windows - X_windows.mean(axis=2, keepdims=True)
+
+    # One-hot encode the labels
+    y_windows = np.eye(np.max(y_windows) + 1)[y_windows]
+
+    # shuffle the data
+    if indices is None:
+        indices = np.arange(len(X_windows))
+        np.random.shuffle(indices)
+    X_windows = X_windows[indices]
+    y_windows = y_windows[indices]
+
+    # split the data
+    train_size = int(len(X_windows) * train_ratio)
+    X_train = X_windows[:train_size]
+    y_train = y_windows[:train_size]
+    X_valid = X_windows[train_size:]
+    y_valid = y_windows[train_size:]
+
+    if return_date:
+        session_train = np.array([f"{subject_id}_{session}"] * len(X_train))
+        session_valid = np.array([f"{subject_id}_{session}"] * len(X_valid))
+        return X_train, y_train, X_valid, y_valid, session_train, session_valid, indices
+    else:
+        return X_train, y_train, X_valid, y_valid, indices
 
 
 
+def _dates_per_trial_samples(data_list, trial_info):
+    """
+    For each trial, create a 1D array of dates with length equal to
+    the number of samples in that trial.
 
+    Returns:
+    - List[np.ndarray], each shaped (samples_i,) of dtype str
+    """
+    if len(data_list) != len(trial_info):
+        raise ValueError(f"Length mismatch: {len(data_list)} trials vs {len(trial_info)} trial_info")
 
+    out = []
+    for i, arr in enumerate(data_list):
+        date_str = str(trial_info[i]['date'])
+        n = arr.shape[0]  # samples_i
+        # Use a Unicode dtype sized to the date string length
+        out.append(np.full(n, date_str, dtype=f'U{len(date_str)}'))
+    return out
+
+def _dates_concatenated_per_sample(data_list, trial_info):
+    """
+    Create a single 1D array of dates with length equal to the total number of samples
+    across all trials, repeating each trial's date by its sample count.
+    """
+    parts = _dates_per_trial_samples(data_list, trial_info)
+    return np.concatenate(parts, axis=0) if parts else np.array([], dtype='U1')
+
+def _concat_trials_prealloc(trial_list):
+    if not trial_list:
+        raise ValueError("trial_list is empty.")
+
+    c, t = trial_list[0].shape[1], trial_list[0].shape[2]
+    total_samples = sum(arr.shape[0] for arr in trial_list)
+    out = np.empty((total_samples, c, t), dtype=trial_list[0].dtype)
+
+    offset = 0
+    for arr in trial_list:
+        s = arr.shape[0]
+        out[offset:offset + s] = arr
+        offset += s
+    return out
+
+def load_centered_new_data_for_otta(train_path, train_dates, train_ratio=0.8, indices=None, return_date=False, class_num=8):
+    """
+    Load daily dataset from pkl files and apply sliding window. Do NOT compute covariance matrices.
+    Parameters
+    ----------
+    train_path
+    train_dates
+    train_ratio
+    indices
+    return_date
+    class_num
+
+    Returns
+    -------
+
+    """
+
+    train_dataset, _ = create_continues_train_test_datasets(
+        h5_file_path=train_path,
+        train_dates=train_dates,
+        test_dates=[],
+    )    
+
+    trial = _concat_trials_prealloc(train_dataset.data)
+    trial_labels = np.concatenate([
+        np.full(arr.shape[0], lab, dtype=np.int64)
+        for arr, lab in zip(train_dataset.data, train_dataset.labels)
+    ])
+    # trial: [sample, channel, time], numpy array; trial_labels: [sample], numpy array
+    date = _dates_concatenated_per_sample(train_dataset.data, train_dataset.trial_info)
+    if class_num == 4:
+        # Remove the data with labels 45, 135, 225, 315
+        valid_indices = np.where((trial_labels == 0) | (trial_labels == 90) | (trial_labels == 180) | (trial_labels == 270))[0]
+        trial = trial[valid_indices]
+        trial_labels = trial_labels[valid_indices]
+        date = date[valid_indices]
+    elif class_num == 8:
+        pass
+    else:
+        raise ValueError('Only support class_num 4 or 8')
+    
+    # Channel_wise centering
+    trial = trial - trial.mean(axis=2, keepdims=True)
+
+    # one-hot encode the labels (robust to non-contiguous labels like angles)
+    unique_labels = np.unique(trial_labels)
+    label_to_index = {lab: idx for idx, lab in enumerate(unique_labels)}
+    trial_labels_idx = np.array([label_to_index[int(lab)] for lab in trial_labels], dtype=np.int64)
+    trial_labels_onehot = np.eye(len(unique_labels), dtype=np.float32)[trial_labels_idx]
+    trial_labels = trial_labels_onehot
+    
+    # shuffle the data
+    if indices is None:
+        indices = np.arange(len(trial))
+        np.random.shuffle(indices)
+    trial = trial[indices]
+    trial_labels = trial_labels[indices]
+    date = date[indices]
+    # split the data
+    train_size = int(len(trial) * train_ratio)
+    train = trial[:train_size]
+    train_labels = trial_labels[:train_size]
+    train_date = date[:train_size]
+    valid = trial[train_size:]
+    valid_labels = trial_labels[train_size:]
+    valid_date = date[train_size:]
+    if return_date:
+        return train, train_labels, valid, valid_labels, train_date, valid_date, indices
+    else:
+        return train, train_labels, valid, valid_labels, indices
+    
+
+if __name__ == "__main__":
+
+    # file_path = '/home/ubuntu/ECoG_datasets/imagery_feedback/data/hh/hh_fb_tongue.mat'
+    # file_path = '/home/ubuntu/ECoG_datasets/imagery_feedback/data/hh/hh_mot_t.mat'
+    # file_path = '/media/ubuntu/Storage1/ecog_data/daily_bdy_20250908/20250325'
+    # train_dataset, test_dataset = load_hypergraph_data([file_path], windows_size=256, step=256, train_ratio=0.8)
+    # print(train_dataset)
+    
+    subject_id = 1
+    preprocessing_dict = {
+        "sfreq": 250,
+        "low_cut": 0,
+        "high_cut": 40,
+        "start": 0.0,
+        "stop": 0.0
+    }
+    dataset, info = _load_bcic(subject_ids=[subject_id], dataset="2a",
+                                preprocessing_dict=preprocessing_dict)    
+    # split the data
+    splitted_ds = dataset.split("session")
+    train_dataset, test_dataset = splitted_ds["session_T"], splitted_ds["session_E"]
+
+    # load the data
+    X = np.concatenate(
+        [run.windows.load_data()._data for run in train_dataset.datasets], axis=0)
+    y = np.concatenate([run.y for run in train_dataset.datasets], axis=0)
+    X_test = np.concatenate(
+        [run.windows.load_data()._data for run in test_dataset.datasets], axis=0)
+    y_test = np.concatenate([run.y for run in test_dataset.datasets], axis=0)
+
+    print(X.shape, y.shape, X_test.shape, y_test.shape)
